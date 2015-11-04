@@ -338,8 +338,18 @@ func (d *DNS) SerializeTo(b gopacket.SerializeBuffer, opts gopacket.SerializeOpt
 	binary.BigEndian.PutUint16(buf[8:10], d.NSCount)
 	binary.BigEndian.PutUint16(buf[10:12], d.ARCount)
 
+	for q := range d.Questions {
+		for i := range d.Questions[q].Name {
+			buf = append(buf, d.Questions[q].Name[i])
+		}
+		buf = append(buf, 0, 0, 0, 0)
+		binary.BigEndian.PutUint16(buf[len(buf)-4:], uint16(d.Questions[q].Type))
+		binary.BigEndian.PutUint16(buf[len(buf)-2:], uint16(d.Questions[q].Class))
+	}
+
 	return nil
 }
+
 var maxRecursion = errors.New("max DNS recursion level hit")
 
 const maxRecursionLevel = 255
