@@ -668,7 +668,7 @@ func (rr *DNSResourceRecord) encodeRData() []byte {
 
 	switch(rr.Type){
 	case DNSTypeA:
-		buf = append(buf, []byte(rr.IP)...)
+		buf = append(buf, rr.IP[len(rr.IP) - 4:]...)
 	}
 
 	return buf
