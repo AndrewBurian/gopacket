@@ -341,69 +341,22 @@ func (d *DNS) SerializeTo(b gopacket.SerializeBuffer, opts gopacket.SerializeOpt
 	binary.BigEndian.PutUint16(buf[10:12], d.ARCount)
 
 	// write the questions section
-	for q := range d.Questions {
-		fmt.Println("Serializing Question")
-		// split the name into chunks
-		chunks := strings.Split(string(d.Questions[q].Name), ".")
-		for c := range chunks {
-			// append the size
-			buf = append(buf, byte(len(chunks[c])))
-			for i := range chunks[c] {
-				// append all the characters
-				buf = append(buf, chunks[c][i])
-			}
-		}
-		// append the zero at the end
-		buf = append(buf, 0)
-
-		// allocate space for the type and class
-		buf = append(buf, 0, 0, 0, 0)
-		binary.BigEndian.PutUint16(buf[len(buf)-4:], uint16(d.Questions[q].Type))
-		binary.BigEndian.PutUint16(buf[len(buf)-2:], uint16(d.Questions[q].Class))
+	for _, q := range d.Questions {
+		buf = append(buf, q.encode()...)
 	}
 
 	// write the answers
-	for a := range d.Answers {
-		fmt.Println("Serializing Answer")
-		// split the name into chunks
-		chunks := strings.Split(string(d.Answers[a].Name), ".")
-		for c := range chunks {
-			// append the size
-			buf = append(buf, byte(len(chunks[c])))
-			for i := range chunks[c] {
-				// append all the characters
-				buf = append(buf, chunks[c][i])
-			}
-		}
-		// append the zero at the end
-		buf = append(buf, 0)
-
-		// allocate space for the type and class
-		buf = append(buf, 0, 0, 0, 0)
-		binary.BigEndian.PutUint16(buf[len(buf)-4:], uint16(d.Answers[a].Type))
-		binary.BigEndian.PutUint16(buf[len(buf)-2:], uint16(d.Answers[a].Class))
-
-		// allocate space for ttl
-		buf = append(buf, 0, 0, 0, 0)
-		binary.BigEndian.PutUint32(buf[len(buf)-8:], uint32(d.Answers[a].TTL))
-
-		// the remainder depends on what kind of answer this is
-		// essentially undoing the work done in DNSResourceRecord.decodeRData
-		switch (d.Answers[a].Type) {
-			case DNSTypeA:
-				// append the address length
-				buf = append(buf, 4)
-				//append the address bytes
-				for i := range []byte(d.Answers[a].IP) {
-					buf = append(buf, []byte(d.Answers[a].IP)[i])
-				}
-			default:
-				return fmt.Errorf("Resource record of type %v not supported", d.Answers[a].Type)
-		}
+	for _, a := range d.Answers {
+		buf = append(buf, a.encode()...)
 	}
 
+	for _, a := range(d.Authorities) {
+		buf = append(buf, a.encode()...)
+	}
 
-	//TODO the other 2 sections
+	for _, a := range(d.Additionals) {
+		buf = append(buf, a.encode()...)
+	}
 
 	// Append enough bytes to the buffer to add the DNS
 	bytes, err := b.PrependBytes(len(buf))
@@ -493,6 +446,19 @@ loop:
 	return (*buffer)[start+1:], index + 1, nil
 }
 
+func encodeName(name []byte) []byte {
+	encoded := make([]byte, 0, len(name) + 1)
+	chunks := strings.Split(string(name), ".")
+	for _, chunk := range(chunks) {
+		encoded = append(encoded, byte(len(chunk)))
+		for _, char := range(chunk) {
+			encoded = append(encoded, byte(char))
+		}
+	}
+	encoded = append(encoded, 0)
+	return encoded
+}
+
 type DNSQuestion struct {
 	Name  []byte
 	Type  DNSType
@@ -512,6 +478,18 @@ func (q *DNSQuestion) decode(data []byte, offset int, df gopacket.DecodeFeedback
 	return endq + 4, nil
 }
 
+func (q *DNSQuestion) encode() []byte {
+	buf := make([]byte, 0, 5)
+
+	buf = append(buf, encodeName(q.Name)...)
+
+	buf = append(buf, 0, 0, 0, 0)
+
+	binary.BigEndian.PutUint16(buf[len(buf)-4:], uint16(q.Type))
+	binary.BigEndian.PutUint16(buf[len(buf)-2:], uint16(q.Class))
+
+	return buf
+}
 //  DNSResourceRecord
 //  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
 //  +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
@@ -575,6 +553,27 @@ func (rr *DNSResourceRecord) decode(data []byte, offset int, df gopacket.DecodeF
 	}
 
 	return endq + 10 + int(rr.DataLength), nil
+}
+
+func (rr *DNSResourceRecord) encode() []byte {
+	buf := make([]byte, 0, 12)
+
+	buf = append(buf, encodeName(rr.Name)...)
+
+	buf = append(buf, 0, 0, 0, 0)
+	binary.BigEndian.PutUint16(buf[len(buf)-4:], uint16(rr.Type))
+	binary.BigEndian.PutUint16(buf[len(buf)-2:], uint16(rr.Class))
+
+	buf = append(buf, 0, 0, 0, 0)
+	binary.BigEndian.PutUint32(buf[len(buf)-4:], uint32(rr.TTL))
+
+	rdata := rr.encodeRData()
+
+	buf = append(buf, 0, 0)
+	binary.BigEndian.PutUint16(buf[len(buf)-2:], uint16(len(rdata)))
+	buf = append(buf, rdata...)
+
+	return buf
 }
 
 func (rr *DNSResourceRecord) String() string {
@@ -662,6 +661,17 @@ func (rr *DNSResourceRecord) decodeRData(data []byte, offset int, buffer *[]byte
 		rr.SRV.Name = name
 	}
 	return nil
+}
+
+func (rr *DNSResourceRecord) encodeRData() []byte {
+	buf := make([]byte, 0, 4)
+
+	switch(rr.Type){
+	case DNSTypeA:
+		buf = append(buf, []byte(rr.IP)...)
+	}
+
+	return buf
 }
 
 type DNSSOA struct {
